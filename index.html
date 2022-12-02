@@ -1,0 +1,145 @@
+<html lang="en">
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <title>Tiny ID proofs</title>
+
+    <!-- include the audited tweetnacl library -- this is our only third-party code -->
+    <!-- integrity via https://www.srihash.org/ -->
+    <script src="https://unpkg.com/tweetnacl@1.0.3/nacl-fast.js" integrity="sha256-a803o7INzpE/gtSyPk4rZhBYtLlT34o/jEXVasT3JEc=" crossorigin="anonymous"></script>
+
+    <script>
+      // helper functions
+      const removeWhitespace = (s) => s.replace(/\s/g, '');
+      const stringToArray = (s) => (new TextEncoder()).encode(s);
+      const arrayToString = (ar) => (new TextDecoder()).decode(ar);
+
+      // base256 functions
+      const b256chars = "˼˻˺˹˸˴˳˰˯ˬ˞˜˛˚˙˘˖˗˕˔˓˒ˑːˏˎˍˌˋˊˉˈˇˆˁˀʽʼʿʾʻʺʹ`\"'º¸·¦¯´¨΅΄ͺ͵‗‘’‚‛“”„‟†‡•‣․‥…‧‵‶‷‸‹›⏐⏑⏒⏓⎸⎹⎺⎻⎼⎽⎮⍿⍽⍸⍳⍪⍘⌜⌝⌞⌟⌠⌡⌔⌈⌉⌊⌋⌌⌍⌎⌏⌐⌑⌇⌁⦁⦂⦙⦚⋄⋅∼∽∾∿≀≁∴∵∶∷∘∙◦▴▪▫╴╵╶╷╸╹╺╻╮╯╰╎┙┚┕┖┑┒┍┎⬨⬩⬪⬫⬝⬞⠁❲❳❬❭❘✧⚬⚘⚕⚊꠶꠷꠨꠩╭⑀⎾⎿⌯℩᭼᎒᎓᎐༚༛༜༝༞༟￩￪￫￬⫶⨼⨽⨾⟊⎯⋮∗｡､꧇⸰⸒⸀⸁⸆⸇⸈⸋⳾⳿⁝⁚⁎⁃‾᱾᭜᭝᠊᠂᠃᠄᛫᛬᛭፣፤፥፦፧፡჻࿒་༌૰॰߸߹՚՛՜՝՞՟։";
+
+      const b256iToC = Array.from(b256chars.slice(0, 256));
+      const b256cToI = Object.fromEntries(b256iToC.map((s, i) => [s, i]));
+      function byteArrayToString(arr) {
+        return Array.from(arr).map((i) => b256iToC[i]).join("");
+      }
+      function stringToByteArray(s) {
+        return Uint8Array.from(s, (c) => {
+          if (!b256cToI.hasOwnProperty(c))
+            throw "Unknown character in encoded string.";
+          return b256cToI[c];
+        });
+      }
+
+      // event handlers
+      const els = {};
+
+      function generatePrivateKey() {
+        const keys = nacl.sign.keyPair();
+        els.privateKey.value = byteArrayToString(keys.secretKey.slice(0, 32));
+        privateKeyUpdated();
+      }
+
+      function privateKeyUpdated() {
+        els.publicKey.innerText = byteArrayToString(getKeys().publicKey);
+      }
+
+      function getKeys() {
+        return nacl.sign.keyPair.fromSeed(stringToByteArray(removeWhitespace(els.privateKey.value)));
+      }
+
+      function signAssertion(evt) {
+        evt.preventDefault();
+        const url = els.assertUrl.value;
+        if (!url.length)
+          return false;
+        const keys = getKeys();
+        const signedMsg = nacl.sign(stringToArray(url), keys.secretKey);
+        const proof = byteArrayToString(Uint8Array.from([...keys.publicKey, ...signedMsg]));
+        els.assertion.innerHTML = `This string is your proof of ownership of the URL ${url}:<br><br>${proof}<br><br> You can add the string to that URL so that others can verify it.`;
+        return false;
+      }
+
+      function checkAssertion(evt) {
+        evt.preventDefault();
+        const assertions = [];
+        let message = '';
+        for (const keyId of ["One", "Two"]) {
+          const assertionBase64 = document.getElementById("checkKey" + keyId).value;
+          const assertionFoundUrl = document.getElementById("checkUrl" + keyId).value;
+          try {
+            const assertionBytes = stringToByteArray(removeWhitespace(assertionBase64));
+            const publicKey = assertionBytes.slice(0, 32);
+            const assertion = assertionBytes.slice(32);
+            const openedMsgBytes = nacl.sign.open(assertion, publicKey);
+            const openedMsg = arrayToString(openedMsgBytes);
+            if (openedMsg !== assertionFoundUrl) throw `URL ${openedMsg} does not match ${assertionFoundUrl}`;
+            assertions.push([byteArrayToString(publicKey), openedMsg]);
+          } catch (e) {
+            message += `Error processing proof for ${assertionFoundUrl}: ${e}\n`;
+          }
+        }
+        if(message === '') {
+          let firstKey = assertions[0][0];
+          if (assertions.every((a) => a[0] === firstKey))
+            message = `These URLs are owned by \n${firstKey}:\n* ` + assertions.map((a) => a[1]).join('\n* ');
+          else {
+            message = "Signature mismatch.";
+          }
+        }
+        els.checkResult.innerText = message;
+      }
+
+      function unhandledError(msg, url, line) {
+        els.error.innerText = msg;
+      }
+
+      function init() {
+        for(const elId of ["error", "generatePrivateKey", "privateKey", "publicKey", "assertUrl", "assertForm", "assertion", "checkKeyOne", "checkKeyTwo", "checkForm", "checkResult"])
+          els[elId] = document.getElementById(elId);
+        els.generatePrivateKey.addEventListener("click", generatePrivateKey);
+        els.privateKey.addEventListener("input", privateKeyUpdated);
+        els.assertForm.addEventListener("submit", signAssertion);
+        els.checkForm.addEventListener("submit", checkAssertion);
+        window.onerror = unhandledError;
+      }
+
+      document.addEventListener("DOMContentLoaded", init);
+    </script>
+  </head>
+  <body>
+    <a href="https://github.com/jcushman/sparkleid/">view source on github</a>
+    <p id="error" style="color: red; font-weight: bold"></p>
+    <h2>Private key</h2>
+    <p>Paste your private key here, or <input type="button" name="generatePrivateKey" id="generatePrivateKey" value="generate"> a new one:</p>
+    <p>
+      <label for="privateKey">Private key:</label>
+      <input name="privateKey" id="privateKey" style="width: 30em"><br>
+      Public key:
+      <span id="publicKey"></span>
+    </p>
+
+    <h2>Assert an identity</h2>
+    <p>Enter a social profile URL here, and paste the resulting string onto that profile to prove you own it:</p>
+    <form id="assertForm">
+      <label for="assertUrl">Profile URL:</label>
+      <input type="text" name="assertUrl" id="assertUrl">
+      <input type="submit">
+    </form>
+    <p id="assertion" style="overflow-wrap: break-word;"></p>
+
+    <h2>To confirm that someone else controls two different profiles, paste their proofs here:</h2>
+    <form id="checkForm">
+      <label for="checkKeyOne">First assertion:</label>
+      <input type="text" name="checkKeyOne" id="checkKeyOne">
+      <label for="checkUrlOne">found at URL</label>
+      <input type="text" name="checkUrlOne" id="checkUrlOne">
+      <br>
+      <label for="checkKeyTwo">Second assertion:</label>
+      <input type="text" name="checkKeyTwo" id="checkKeyTwo">
+      <label for="checkUrlTwo">found at URL</label>
+      <input type="text" name="checkUrlTwo" id="checkUrlTwo">
+      <br>
+      <input type="submit">
+    </form>
+    <p id="checkResult"></p>
+  </body>
+</html>
